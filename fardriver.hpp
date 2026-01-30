@@ -1,6 +1,6 @@
-#pragma once
-
 #ifndef _010EDITOR
+
+#pragma once
 #include <cstdint>
 #include "fardriver_message.hpp"
 #include <math.h>
