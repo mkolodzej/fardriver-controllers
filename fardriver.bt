@@ -367,5 +367,5 @@ struct {
     
     FSeek(start);
     ubyte data[16];
-    local ushort hash = CalculateCRC(data, 14);
+    local ushort hash <format=hex> = CalculateCRC(data, 14);
 } packet[(FileSize() - packet_start)/ 16] <read=Str("%s",type), optimize=false>;
