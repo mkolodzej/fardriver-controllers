@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #include "fardriver_controller.hpp"
 
@@ -12,11 +13,38 @@ std::array<uint8_t, 32> incoming{};
 uint32_t incoming_length = 0;
 uint32_t read_limit = UINT32_MAX;
 
+// Accepts at most write_chunk_limit bytes per call, emulating a transport whose
+// TX buffer fills mid-frame.
+uint32_t write_chunk_limit = UINT32_MAX;
+uint32_t write_calls = 0;
+
 uint32_t write_bytes(const uint8_t *data, uint32_t length) {
-    assert(length <= written.size());
-    std::memcpy(written.data(), data, length);
-    written_length = length;
-    return length;
+    const uint32_t accepted = length < write_chunk_limit ? length : write_chunk_limit;
+    assert(written_length + accepted <= written.size());
+    std::memcpy(written.data() + written_length, data, accepted);
+    written_length += accepted;
+    ++write_calls;
+    return accepted;
+}
+
+void reset_write_capture() {
+    written_length = 0;
+    write_calls = 0;
+}
+
+// A separate byte-accurate stream for exercising legacy Read() resynchronisation.
+std::vector<uint8_t> stream_bytes;
+size_t stream_pos = 0;
+
+uint32_t stream_available() {
+    return static_cast<uint32_t>(stream_bytes.size() - stream_pos);
+}
+
+uint32_t stream_read(uint8_t *data, uint32_t length) {
+    uint32_t count = 0;
+    while (count < length && stream_pos < stream_bytes.size())
+        data[count++] = stream_bytes[stream_pos++];
+    return count;
 }
 
 uint32_t read_bytes(uint8_t *data, uint32_t length) {
@@ -30,6 +58,7 @@ uint32_t available_bytes() { return incoming_length; }
 void expect_packet(const std::array<uint8_t, 8> &expected) {
     assert(written_length == expected.size());
     assert(std::memcmp(written.data(), expected.data(), expected.size()) == 0);
+    reset_write_capture();
 }
 } // namespace
 
@@ -47,6 +76,7 @@ int main() {
     expect_packet({0xAA, 0x05, 0xFA, 0x01, 0x5F, 0x5F, 0x68, 0x97});
 
     const uint8_t word[] = {0x12, 0x34};
+    reset_write_capture();
     assert(controller.WriteAddr(word, 0x22, sizeof(word)) == FardriverController::WriteResult::Success);
     assert(written_length == 8);
     assert(written[0] == 0xAA && written[1] == 0xC6);
@@ -57,11 +87,37 @@ int main() {
     std::array<uint8_t, 0x180> cflash{};
     for (size_t i = 0; i < cflash.size(); ++i)
         cflash[i] = static_cast<uint8_t>(i);
+    reset_write_capture();
     assert(controller.SaveCANParameterImage(cflash.data(), cflash.size()) ==
            FardriverController::WriteResult::Success);
     assert(written_length == 390);
     assert(written[0] == 0xAA && written[1] == 0xFF);
     assert(std::memcmp(written.data() + 4, cflash.data(), cflash.size()) == 0);
+
+    // A transport that accepts only part of each write must still put the whole
+    // frame on the wire. Abandoning it mid-frame leaves the controller waiting
+    // on a truncated packet, so short writes are retried rather than reported
+    // as a failure.
+    const std::array<uint8_t, 390> full_frame = [&] {
+        std::array<uint8_t, 390> copy{};
+        std::memcpy(copy.data(), written.data(), copy.size());
+        return copy;
+    }();
+    for (const uint32_t limit : {1u, 7u, 64u, 389u}) {
+        reset_write_capture();
+        write_chunk_limit = limit;
+        assert(controller.SaveCANParameterImage(cflash.data(), cflash.size()) ==
+               FardriverController::WriteResult::Success);
+        assert(written_length == 390);
+        assert(std::memcmp(written.data(), full_frame.data(), full_frame.size()) == 0);
+        assert(write_calls > 1);
+    }
+    // A transport that accepts nothing must fail rather than spin forever.
+    reset_write_capture();
+    write_chunk_limit = 0;
+    assert(controller.SaveCANParameterImage(cflash.data(), cflash.size()) ==
+           FardriverController::WriteResult::TransportFailure);
+    write_chunk_limit = UINT32_MAX;
 
     const uint8_t expected_crc[8] = {1,2,3,4,5,6,7,8};
     incoming_length = 0;
@@ -128,4 +184,29 @@ int main() {
 
     frame.crc[1] ^= 1;
     assert(!frame.VerifyCRC());
+
+    // Layout-independent header accessors must agree with the wire byte rather
+    // than with implementation-defined bitfield allocation order.
+    FardriverMessage probe{};
+    probe.GetRaw()[1] = 0xB6;
+    assert(probe.HeaderFlag() == 2 && probe.HeaderId() == 0x36);
+
+    // Legacy Read() must discard leading noise within a single call. Previously
+    // it consumed one byte per call while requiring 16 available, so it stayed
+    // permanently behind the stream after losing sync.
+    frame.crc[1] ^= 1;
+    assert(frame.VerifyCRC());
+    stream_bytes.clear();
+    for (int i = 0; i < 5; ++i)
+        stream_bytes.push_back(0x00); // noise, not a start byte
+    for (size_t i = 0; i < sizeof(frame); ++i)
+        stream_bytes.push_back(frame.GetRaw()[i]);
+    stream_pos = 0;
+    FardriverSerial stream_serial{write_bytes, stream_read, stream_available};
+    FardriverController stream_controller(&stream_serial);
+    FardriverData decoded{};
+    const auto read_result = stream_controller.Read(&decoded);
+    assert(read_result.error == FardriverController::Success);
+    assert(read_result.addr == 0xE2);
+    assert(stream_pos == stream_bytes.size());
 }

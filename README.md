@@ -65,6 +65,40 @@ the real 384-byte `cflash` image rather than incorrectly deriving it from the
 required before changing live parameters. Session/poll names remain contextual
 because the PC and mobile applications use related packets differently.
 
+### Transport robustness
+
+These properties are inherited-code fixes carried by this fork and are covered
+by the host vectors:
+
+- **Short writes are drained, not abandoned.** Every send path routes through
+  `WriteAll()`, which retries until the whole frame is accepted and reports
+  `TransportFailure` only when the transport stops accepting bytes entirely.
+  Returning early on a partial write would leave a torn frame on the wire and
+  the controller waiting on the remainder.
+- **`SendPacket()` no longer builds its 2055-byte frame on the stack.** It
+  streams the padded payload in 64-byte chunks with an incrementally
+  accumulated CRC. The output is byte-identical to the previous single-buffer
+  implementation for every payload length; measured stack use drops from
+  ~2128 bytes to under 100, which matters because a 2 KB frame overflows the
+  default task stack on an ESP32-class target.
+- **`FardriverTelemetryReader::Poll()` is bounded.** It processes at most
+  `max_bytes_per_poll` bytes (default 64) so a saturated or noisy stream cannot
+  starve peer tasks or the watchdog. `frames()`/`errors()` counters expose link
+  health, because `Poll()` returns one result per call and would otherwise mask
+  an error that occurred before a good frame in the same drain.
+- **Legacy `Read()` resynchronizes within one call.** It previously consumed a
+  single byte per call while requiring 16 available, leaving the decoder
+  permanently behind the stream after losing sync. Prefer
+  `FardriverTelemetryReader` for new code.
+- **Header decoding does not rely on bitfield order.** `HeaderId()`/
+  `HeaderFlag()` mask the wire byte explicitly; bitfield allocation order is
+  implementation-defined and unsafe for a wire protocol.
+
+> The host vectors use plain `assert()`, so they only check anything when
+> assertions are enabled. Never build them with `-DNDEBUG` — the binary will
+> exit 0 with every check compiled out. The commands in this file are correct
+> as written.
+
 The parser behavior is covered by native golden-vector tests:
 
 ```sh

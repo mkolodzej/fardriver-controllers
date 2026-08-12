@@ -45,6 +45,13 @@ struct FardriverMessage {
         return this->crc[0] == a && this->crc[1] == b;
     }
 
+    // Layout-independent header access. The bitfield below is kept for API
+    // compatibility, but bitfield allocation order is implementation-defined,
+    // so wire-protocol decisions must use these explicit masks instead.
+    uint8_t HeaderRaw() const { return ((const uint8_t *)this)[1]; }
+    uint8_t HeaderId() const { return HeaderRaw() & 0x3f; }
+    uint8_t HeaderFlag() const { return (HeaderRaw() >> 6) & 0x3; }
+
     uint8_t start = 0xAA;
     struct Header {
         uint8_t id : 6;

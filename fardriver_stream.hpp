@@ -126,15 +126,23 @@ public:
     };
 
     explicit FardriverTelemetryReader(FardriverReadStream *stream,
-                                      uint32_t timeout_ms = 250)
-        : stream_(stream), parser_(timeout_ms) {}
+                                      uint32_t timeout_ms = 250,
+                                      uint32_t max_bytes_per_poll = 64)
+        : stream_(stream), parser_(timeout_ms),
+          max_bytes_per_poll_(max_bytes_per_poll == 0 ? 1 : max_bytes_per_poll) {}
 
+    // Processes at most max_bytes_per_poll bytes so a fast or noisy stream
+    // cannot monopolise the caller. On an RTOS target an unbounded drain here
+    // starves peer tasks and the watchdog, so the quota is a hard bound rather
+    // than a tuning hint. Returns after the first complete frame; any bytes
+    // still buffered in the transport are picked up by the next call.
     PollResult Poll(FardriverData &data, uint32_t now_ms, uint8_t *address = nullptr) {
         if (stream_ == nullptr || stream_->available == nullptr || stream_->read == nullptr) {
             return PollResult::ReadError;
         }
         PollResult result = Map(parser_.Tick(now_ms));
-        while (stream_->available() > 0) {
+        uint32_t budget = max_bytes_per_poll_;
+        while (budget-- > 0 && stream_->available() > 0) {
             uint8_t byte = 0;
             if (stream_->read(&byte, 1) != 1) {
                 return PollResult::ReadError;
@@ -142,20 +150,30 @@ public:
             FardriverMessage message{};
             const auto event = parser_.Push(byte, now_ms, message);
             if (event == FardriverFrameParser::Event::Frame) {
-                const uint8_t id = message.GetRaw()[1] & 0x7f;
+                const uint8_t id = message.HeaderId();
                 const uint8_t addr = FardriverMessage::flashReadAddr[id];
                 std::memcpy(data.GetAddr(addr), message.data, sizeof(message.data));
                 if (address != nullptr) {
                     *address = addr;
                 }
+                // A frame is the caller's payload, but errors seen earlier in
+                // this same drain would otherwise vanish. Count them so link
+                // health stays observable.
+                ++frames_;
                 return PollResult::Updated;
             }
             if (event != FardriverFrameParser::Event::None) {
                 result = Map(event);
+                ++errors_;
             }
         }
         return result;
     }
+
+    // Cumulative link-health counters. Poll() returns one result per call, so
+    // these are the only way to see errors that occurred before a good frame.
+    uint32_t frames() const { return frames_; }
+    uint32_t errors() const { return errors_; }
 
     void Reset() { parser_.Reset(); }
 
@@ -172,4 +190,7 @@ private:
 
     FardriverReadStream *stream_;
     FardriverFrameParser parser_;
+    uint32_t max_bytes_per_poll_;
+    uint32_t frames_ = 0;
+    uint32_t errors_ = 0;
 };
