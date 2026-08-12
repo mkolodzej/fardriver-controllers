@@ -143,8 +143,41 @@ metadata to prove its duration independently. Therefore neither `FFE1` nor
 passively subscribed `FFE2`
 currently supplies status frames. The live `FFE1` traffic and the JDY-family
 GATT layout are consistent with a transparent-UART module, but this differs
-from the official app's module profile. `FF10` is not used by the extracted
-FarDriver app and must not be treated as a controller channel.
+from the official app's module profile.
+
+**[MEASURED] 2026-08-12 — live host enumeration supersedes the narrative GATT
+record above.** A connected `bleak` enumeration on the operator's host, with its
+raw output preserved as
+`captures/nd72200-gatt-and-multichar-2026-08-12.jsonl`, produced the full table:
+`1800` (`2A00` rw / `2A01` r / `2A04` r), `1801` (`2A05` indicate),
+**`FFE0`** (`FFE1` h13 notify/read/write/write-no-response, `FFE2` h16
+notify/write, `FFE3` h19 write), and **`FF10`** (`FF11` h22 and `FF12` h25, both
+notify + write-without-response). Two corrections follow:
+
+- 🔴 **`FF10` DOES exist on this adapter.** The earlier statement that it "is not
+  used by the extracted FarDriver app" is true of the *app* but was wrongly
+  worded as if the service were absent here. It is present with two
+  notify-capable characteristics. It still must not be treated as a proven
+  controller channel — see the capture result below.
+- **`FEE7` is advertised but exposes no GATT service.** It appears in the
+  advertisement alongside `FFE0` and vanishes on connection.
+- ✅ **`FFEC` is definitively absent**, now from preserved raw output rather than
+  narrative.
+
+**[MEASURED] Simultaneous 32-second passive subscription to `FFE1`, `FFE2`,
+`FF11` and `FF12`** (no payload writes) returned **202 notifications, all on
+`FFE1`, all ASCII `AT\r\n`** — 201 single copies plus one 36-byte run of nine.
+`FFE2`, `FF11` and `FF12` were **silent**. Zero `0xAA`-led frames, zero 16-byte
+records. `2A05` rejected subscription with `Access Denied`, which is normal for
+the reserved Service Changed characteristic.
+
+**[INFERENCE]** The module is echoing its **own AT command interface** rather
+than relaying controller bytes, i.e. it is not in transparent pass-through mode.
+Since the other three notify channels stay silent, **passive subscription alone
+does not activate relaying** on this adapter. Whether any write would switch it
+into transparent mode is **not established and not authorized** — command
+`0x13/0x07` participates in login/binding state and implementations disagree on
+its values and timing.
 
 Successful captures emit timestamped raw frames as hexadecimal; the parser
 only reports frames after CRC validation. Preserve raw captures as the evidence
