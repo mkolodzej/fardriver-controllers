@@ -10,6 +10,13 @@ reverse-engineering library:
 - read-only exact-unit BLE capture tooling and preserved evidence for the
   `ND72200_80_A_HA86` investigation.
 
+> **Where the BLE tools and captures live.** They were **moved out of this repo**
+> on 2026-08-12 into the consuming workspace — `<workspace>/tools/ble/` and
+> `<workspace>/research/ble-captures/` — because this clone sits under a
+> **gitignored `external/`** directory there, so nothing here was ever committed
+> by the workspace and the exact-unit evidence had no durable home. Paths below
+> are written relative to that workspace. See `<workspace>/tools/ble/README.md`.
+
 Fork provenance: [mkolodzej/fardriver-controllers](https://github.com/mkolodzej/fardriver-controllers),
 based on upstream commit `7cbc0c9`. The upstream repository is unchanged by
 this fork. The implementation is MIT-licensed like the upstream code; vendor
@@ -148,7 +155,7 @@ from the official app's module profile.
 **[MEASURED] 2026-08-12 — live host enumeration supersedes the narrative GATT
 record above.** A connected `bleak` enumeration on the operator's host, with its
 raw output preserved as
-`captures/nd72200-gatt-and-multichar-2026-08-12.jsonl`, produced the full table:
+`<workspace>/research/ble-captures/nd72200-gatt-and-multichar-2026-08-12.jsonl`, produced the full table:
 `1800` (`2A00` rw / `2A01` r / `2A04` r), `1801` (`2A05` indicate),
 **`FFE0`** (`FFE1` h13 notify/read/write/write-no-response, `FFE2` h16
 notify/write, `FFE3` h19 write), and **`FF10`** (`FF11` h22 and `FF12` h25, both
@@ -175,11 +182,11 @@ the reserved Service Changed characteristic.
 probe stages ran. Both are negative, and together they invert the "module echoes
 itself" reading.**
 
-- `tools/fardriver_ble_at_probe.py` → `captures/nd72200-ble-at-query-probe-2026-08-12.jsonl`.
+- `<workspace>/tools/ble/fardriver_ble_at_probe.py` → `<workspace>/research/ble-captures/nd72200-ble-at-query-probe-2026-08-12.jsonl`.
   Nine **query-only** AT commands to `FFE1` (`AT`, `AT+VERSION`, `AT+VERSION?`,
   `AT+NAME?`, `AT+BAUD?`, `AT+TUUID?`, `AT+SUUID?`, `AT+ROLE?`, `AT+HELP`)
   produced **not one distinct reply** — 170 receives, all `AT\r\n`.
-- `tools/fardriver_ble_handshake_probe.py` → `captures/nd72200-ble-at-reply-handshake-2026-08-12.jsonl`.
+- `<workspace>/tools/ble/fardriver_ble_handshake_probe.py` → `<workspace>/research/ble-captures/nd72200-ble-at-reply-handshake-2026-08-12.jsonl`.
   Five module-style acknowledgements (`OK`, `OK`, `+OK`, `AT+OK`, bare `OK`)
   produced **210 receives, 0 non-`AT` payloads**, flat per-window counts
   (25/25/27/26/25 against a 29 baseline).
@@ -213,7 +220,7 @@ capture host was changed to an **ASUS USB-BT400** (Broadcom BCM20702A0,
 `USB\VID_0B05&PID_17CB`, driver `oem237.inf` `12.0.1.921`): `BTHUSB` **event 31 is
 gone** and RSSI improved from −82…−90 to **−69…−71 dBm**.
 
-Re-capture (`captures/nd72200-ble-recapture-usbbt400-2026-08-12.jsonl`) connected
+Re-capture (`<workspace>/research/ble-captures/nd72200-ble-recapture-usbbt400-2026-08-12.jsonl`) connected
 on **attempt 1** with no retry loop and reproduced everything: **269 receives over
 42.7 s, all on `FFE1`, all `AT\r\n`**, zero `0xAA`-led frames, zero 16-byte
 records, `FFE2`/`FF11`/`FF12` silent, the identical GATT table, `FFEC` still
