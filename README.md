@@ -207,12 +207,24 @@ changes) also remain excluded: the controller's factory configuration was never
 exported, so there is no restore point.
 
 ⚠ **Discount BLE negatives by the host radio.** The capture host used a
-**CSR8510 A10** dongle on Microsoft's 2006-era in-box driver. Windows logs
-`BTHUSB` **event 34** (LE controller state mask `0x1fffffff` against a required
-`0x2491f7fffff`) and **event 31** (no hardware advertisement filtering) on every
-radio reset. Under sustained scan+connect load its scanner wedges — **zero scan
-results while the device still reports `OK`** — and only a device reset clears it.
-A zero-device scan is a host fault, not an adapter fact.
+**CSR8510 A10** dongle (`USB\VID_0A12&PID_0001`) on Microsoft's in-box `bth.inf`.
+Windows logs `BTHUSB` **event 31** (no hardware filtering of LE advertisements)
+and **event 34** (LE controller state mask `0x1fffffff` against a required
+`0x2491f7fffff`) on every radio reset. Under sustained scan+connect load its
+scanner wedges — **zero scan results while the device still reports `OK`** — and
+only a device reset clears it. A zero-device scan is a host fault, not an adapter
+fact.
+
+Event **31** is the load-bearing one: without hardware advertisement filtering
+every advertisement in range is processed in software, saturating an early LE
+controller. Event 34 concerns the **peripheral** role, which read-only central-role
+capture does not use, so it is evidence of a weak controller rather than the cause.
+
+**No driver change fixes this.** The in-box `bth.inf` is already correct and
+current (version `10.0.26100.8875`; the "2006" driver date is the INF's, not the
+binary's), Qualcomm/CSR discontinued vendor support for this part, and events 31/34
+report **silicon capability read back over HCI** — a driver cannot add controller
+states or a filter-accept list the chip lacks. The fix is a BT 5.x adapter.
 
 Successful captures emit timestamped raw frames as hexadecimal; the parser
 only reports frames after CRC validation. Preserve raw captures as the evidence
