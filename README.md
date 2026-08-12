@@ -6,9 +6,7 @@ reverse-engineering library:
 - bounded read/write framing with explicit transport and validation errors;
 - incremental status parsing with noise resynchronization, CRC checks, and
   timeouts;
-- native protocol vectors plus ESP32 PlatformIO smoke, UART, and NimBLE builds;
-- read-only exact-unit BLE capture tooling and preserved evidence for the
-  `ND72200_80_A_HA86` investigation.
+- native protocol vectors plus ESP32 PlatformIO smoke, UART, and NimBLE builds.
 
 > **Where the BLE tools and captures live.** They were **moved out of this repo**
 > on 2026-08-12 into the consuming workspace — `<workspace>/tools/ble/` and

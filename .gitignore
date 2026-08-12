@@ -3,5 +3,4 @@
 examples/platformio-smoke/.pio/
 examples/esp32-uart-readonly/.pio/
 examples/esp32-ble-readonly/.pio/
-tools/__pycache__/
 *-vectors.exe
