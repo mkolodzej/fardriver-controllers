@@ -171,13 +171,48 @@ notify + write-without-response). Two corrections follow:
 records. `2A05` rejected subscription with `Access Denied`, which is normal for
 the reserved Service Changed characteristic.
 
-**[INFERENCE]** The module is echoing its **own AT command interface** rather
-than relaying controller bytes, i.e. it is not in transparent pass-through mode.
-Since the other three notify channels stay silent, **passive subscription alone
-does not activate relaying** on this adapter. Whether any write would switch it
-into transparent mode is **not established and not authorized** — command
-`0x13/0x07` participates in login/binding state and implementations disagree on
-its values and timing.
+**[MEASURED] 2026-08-12 — writes were then authorized by the operator, and two
+probe stages ran. Both are negative, and together they invert the "module echoes
+itself" reading.**
+
+- `tools/fardriver_ble_at_probe.py` → `captures/nd72200-ble-at-query-probe-2026-08-12.jsonl`.
+  Nine **query-only** AT commands to `FFE1` (`AT`, `AT+VERSION`, `AT+VERSION?`,
+  `AT+NAME?`, `AT+BAUD?`, `AT+TUUID?`, `AT+SUUID?`, `AT+ROLE?`, `AT+HELP`)
+  produced **not one distinct reply** — 170 receives, all `AT\r\n`.
+- `tools/fardriver_ble_handshake_probe.py` → `captures/nd72200-ble-at-reply-handshake-2026-08-12.jsonl`.
+  Five module-style acknowledgements (`OK`, `OK`, `+OK`, `AT+OK`, bare `OK`)
+  produced **210 receives, 0 non-`AT` payloads**, flat per-window counts
+  (25/25/27/26/25 against a 29 baseline).
+
+**[MEASURED]** Inter-arrival is **min 115 ms / median 150 ms / max 360 ms** — a
+steady cadence that is **independent of anything written**.
+
+**[INFERENCE]** The endpoint is therefore a **periodic transmitter, not an AT
+responder**. "The module echoes its own AT interface" does not fit a fixed-period
+emitter that ignores both queries and acknowledgements. The better-supported
+reading is that the `AT\r\n` **originates in the controller** and is relayed by a
+transparent-mode module, with the controller retrying on a timer because nothing
+answers — consistent with this README's own command notes, where the
+**controller** is the party issuing `AT+BAUD=19200` (`0x06`),
+`AT+NAME=CONTROLDM` (`0x0A`) and `AT+TUUID=FFEC` (`0x10`). That last one also
+explains the profile mismatch: **TUUID is configurable**, so a module whose TUUID
+was never provisioned would expose `FFE1`/`FFE2`/`FFE3` and no `FFEC`.
+**[UNVERIFIED]** — no assignment write has been made.
+
+⚠ **Still excluded:** an **assignment** write (`AT+TUUID=FFEC`, `AT+BAUD=…`) that
+reconfigures the module rather than answering it. It persistently changes hardware
+state and could leave the adapter unable to talk to the official app, so it needs
+a deliberate decision rather than a probe. FarDriver **address writes** (parameter
+changes) also remain excluded: the controller's factory configuration was never
+exported, so there is no restore point.
+
+⚠ **Discount BLE negatives by the host radio.** The capture host used a
+**CSR8510 A10** dongle on Microsoft's 2006-era in-box driver. Windows logs
+`BTHUSB` **event 34** (LE controller state mask `0x1fffffff` against a required
+`0x2491f7fffff`) and **event 31** (no hardware advertisement filtering) on every
+radio reset. Under sustained scan+connect load its scanner wedges — **zero scan
+results while the device still reports `OK`** — and only a device reset clears it.
+A zero-device scan is a host fault, not an adapter fact.
 
 Successful captures emit timestamped raw frames as hexadecimal; the parser
 only reports frames after CRC validation. Preserve raw captures as the evidence
