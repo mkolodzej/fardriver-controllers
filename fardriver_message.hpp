@@ -25,6 +25,10 @@ struct FardriverMessage {
         return (uint8_t *)(this);
     }
 
+    const uint8_t * GetRaw() const {
+        return reinterpret_cast<const uint8_t *>(this);
+    }
+
     bool VerifyStart() {
         return start == 0xAA;
     }

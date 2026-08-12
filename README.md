@@ -1,5 +1,107 @@
 # Nanjing Fardriver Controllers
 
+## Build verification
+
+This repository is a PlatformIO library rather than a standalone firmware
+application. A minimal ESP32 consumer is provided under
+`examples/platformio-smoke` to verify that the public headers, wire layouts,
+and compiled implementation remain usable with the embedded GCC toolchain:
+
+```sh
+pio run --project-dir examples/platformio-smoke
+```
+
+The host-side protocol vectors exercise the vendor-observed CRC and the two
+legacy command packets without connecting to a controller:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I . \
+  tests/protocol_vectors.cpp fardriver_message.cpp -o protocol-vectors
+./protocol-vectors
+```
+
+`Open()` is observed in the FarDriver PC application. `KeepAlive()` retains
+the legacy `13/07/5F/5F` guess for API compatibility. The recurring PC packet
+`AA 05 FA 01 5F 5F 68 97` is separately exposed as
+`ObservedPcPollExperimental()`; its semantics are not proven universal.
+
+## Read-only telemetry and capture
+
+`fardriver_stream.hpp` is the preferred telemetry API. It is deliberately
+separate from `FardriverController`, exposes no transmit callback, accepts
+arbitrarily fragmented input, resynchronizes after noise or corrupt frames,
+verifies the status header and CRC, and expires incomplete frames after a
+bounded timeout. It supports only the newer `0x80 | id` status framing; the
+official app also contains a legacy additive-checksum receive path that is not
+implemented here.
+
+`FardriverController` provides bounded read/write framing with explicit error
+results. Normal address writes and the vendor application's 312-byte parameter
+and 384-byte CAN-image formats have host vector coverage; transport short writes
+and firmware-response timeouts fail explicitly. `SaveCANParameterImage()` takes
+the real 384-byte `cflash` image rather than incorrectly deriving it from the
+512-byte telemetry map. Hardware validation on each controller revision is still
+required before changing live parameters. Session/poll names remain contextual
+because the PC and mobile applications use related packets differently.
+
+The parser behavior is covered by native golden-vector tests:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I . \
+  tests/stream_parser_vectors.cpp fardriver_message.cpp -o stream-vectors
+./stream-vectors
+
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I . \
+  tests/telemetry_reader_vectors.cpp fardriver_message.cpp -o reader-vectors
+./reader-vectors
+```
+
+Two passive ESP32 capture applications are provided:
+
+These are variant-specific experimental bench artifacts. Do not connect either
+one to a controller solely from these examples: first qualify the exact unit's
+connector, voltage, polarity, signaling standard, and protocol.
+
+- `examples/esp32-uart-readonly`: fixed 19200-baud UART capture. Its pins
+  default to `-1`, so the compiled image refuses to initialize the port until
+  the operator explicitly supplies a qualified RX pin. TX remains disabled for
+  passive capture. Use 3.3 V TTL only;
+  a true +/-12 V RS-232 adapter is incompatible. Never connect `BW5V`.
+- `examples/esp32-ble-readonly`: NimBLE 2.5.1 client for the `FFE0` service and
+  a configurable notification characteristic. It requires an
+  explicit 17-character peer address and contains no characteristic payload
+  write. Connecting and subscribing still changes BLE link/CCCD state, may
+  prevent the official app from connecting, and is not radio-passive.
+
+The decompiled official Android v2.2.4 APK uses `FFE0`/`FFEC` exclusively and
+performs both notifications and protocol writes through `FFEC`. Exact-unit
+Windows discovery, operator-correlated to adapter `603164J3A101351` at
+`28:D4:1E:8D:29:25`, instead found `FFE1`
+(notify/read/write), `FFE2` (notify/write), and `FFE3` (write), not the EKSR
+project's `FFEC`. A payload-read-only `FFE1` capture produced repeated ASCII
+`AT\r\n` records rather than 16-byte telemetry. `FFE2` remains the next passive
+capture candidate; select it with `FARDRIVER_BLE_CHARACTERISTIC_UUID="FFE2"`.
+An operator-observed 20-second payload-read-only `FFE2` subscription completed
+with zero notifications, although the original capture lacks sufficient run
+metadata to prove its duration independently. Therefore neither `FFE1` nor
+passively subscribed `FFE2`
+currently supplies status frames. The live `FFE1` traffic and the JDY-family
+GATT layout are consistent with a transparent-UART module, but this differs
+from the official app's module profile. `FF10` is not used by the extracted
+FarDriver app and must not be treated as a controller channel.
+
+Both emit timestamped, CRC-valid raw frames as hexadecimal. Preserve those
+raw captures as the evidence used to create an exact controller/firmware
+decoder profile. The packed `FardriverData` helpers contain reverse-engineered
+scalings from other controller variants; do not treat them as validated for a
+new controller merely because framing and CRC pass.
+
+These payload-read-only examples may receive no frames until another client
+activates streaming. Activation packets are intentionally excluded: command
+`0x13/0x07` participates in login/binding state, and observed FarDriver
+implementations disagree about its values and timing. Any activation capability
+must be captured, reviewed, and separately approved for the exact controller.
+
 ## Serial Protocol
 
 You can interact with Fardriver controllers on a computer using the serial port (2x2 connector) with a RS232-USB adapter, provided you don't connect the 5V line (so only TX, RX & GND are connected), and your adapter uses 3.3V logic. [Termite](https://www.compuphase.com/software_termite.htm) works well to interact with the controller, as long as you have enabled the `Hex View` plugin under settings.

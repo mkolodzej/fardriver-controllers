@@ -17,49 +17,67 @@ struct FardriverController {
 
     }
 
-    // used when App.NewVersion
-    void WriteAddr(uint8_t * data, uint8_t addr, uint16_t length) {
-        length += 4;
+    enum class WriteResult {
+        Success,
+        InvalidArgument,
+        UnsupportedLength,
+        TransportFailure,
+        UnsupportedSourceLayout
+    };
+
+    // Frame a payload using the protocol implemented by the vendor app's
+    // ConnectPage.WriteAddr. Payload is never modified and writes must complete.
+    WriteResult WriteAddr(const uint8_t * payload, uint8_t addr, uint16_t payload_length) {
+        if (serial == NULL || serial->write == NULL ||
+            (payload == NULL && payload_length != 0))
+            return WriteResult::InvalidArgument;
+        // The app has explicit encodings for its 312/384-byte flash images.
+        // Other writes encode the framed length in one byte (0xC0 + length),
+        // which is unambiguous only through 59 payload bytes.
+        if (payload_length != 0x180 && payload_length != 0x138 && payload_length > 59)
+            return WriteResult::UnsupportedLength;
+
+        uint8_t data[0x180 + 6];
+        const uint16_t framed_length = payload_length + 4;
         data[0] = 0xAA; // 170
-        if (length == 0x184) {
+        if (framed_length == 0x184) {
             // CAN Data, 0x180 bytes long
             // addr is 0
             data[1] = 0xFF; 
-        } else if (length == 0x13C) {
+        } else if (framed_length == 0x13C) {
             // All params?, 0x138 bytes long
             // addr is 0 or 1
             data[1] = 0xFE;
-        } else if (length == 0x8C) {
-            // idk, not used in mobile
-            // may set password? 30 bytes in length
-            data[1] = 0xFD;
         } else {
-            // Normal flash memory
-            data[1] = 0xC0 + length; 
+            data[1] = static_cast<uint8_t>(0xC0 + framed_length);
         }
         data[2] = addr;
         data[3] = addr;
+        if (payload_length != 0)
+            memcpy(data + 4, payload, payload_length);
         uint8_t a = 0x3C; // 60
         uint8_t b = 0x7F; // 127
-        for (uint8_t pos = 0; pos < length; ++pos) {
+        for (uint16_t pos = 0; pos < framed_length; ++pos) {
             auto crc_i = a ^ data[pos];
             a = b ^ FardriverMessage::crcTableHi[crc_i];
             b = FardriverMessage::crcTableLo[crc_i];
         }
-        data[length] = a;
-        data[length + 1] = b;
-        serial->write(data, length + 2);
+        data[framed_length] = a;
+        data[framed_length + 1] = b;
+        const uint32_t wire_length = framed_length + 2;
+        return serial->write(data, wire_length) == wire_length
+            ? WriteResult::Success : WriteResult::TransportFailure;
     }
 
-    void UpdateWord(uint8_t addr, uint8_t first, uint8_t second) {
-        uint8_t data[8];
-        data[4] = first;
-        data[5] = second;
-        WriteAddr(data, addr, 2);
+    WriteResult UpdateWord(uint8_t addr, uint8_t first, uint8_t second) {
+        const uint8_t payload[2] = { first, second };
+        return WriteAddr(payload, addr, sizeof(payload));
     }
 
     // used when !App.NewVersion
-    void SendRS323Data(uint8_t command, uint8_t sub_command, uint8_t value_1, uint8_t value_2) {
+    WriteResult SendRS232Command(uint8_t command, uint8_t sub_command, uint8_t value_1, uint8_t value_2) {
+        if (serial == NULL || serial->write == NULL)
+            return WriteResult::InvalidArgument;
         uint8_t data[8];
         data[0] = 0xAA; // 170
         data[1] = command;
@@ -69,29 +87,41 @@ struct FardriverController {
         data[5] = value_2;
         data[6] = data[0] + data[1] + data[2] + data[3] + data[4] + data[5];
         data[7] = ~data[6];
-        serial->write(data, 8);
+        return serial->write(data, 8) == 8
+            ? WriteResult::Success : WriteResult::TransportFailure;
     }
 
-    void WriteSysCmd(uint8_t command) {
-        uint8_t data[8];
-        data[4] = 0x88;
-        data[5] = command;
-        WriteAddr(data, 0xA0, 2);
+    WriteResult SendRS323Data(uint8_t command, uint8_t sub_command, uint8_t value_1, uint8_t value_2) {
+        return SendRS232Command(command, sub_command, value_1, value_2);
     }
+
+    WriteResult WriteSystemCommand(uint8_t command) {
+        const uint8_t payload[2] = { 0x88, command };
+        return WriteAddr(payload, 0xA0, sizeof(payload));
+    }
+
+    WriteResult WriteSysCmd(uint8_t command) { return WriteSystemCommand(command); }
 
     // sent immediately after opening port
     // name is a guess
-    void Open(void) {
-       SendRS323Data(0x13, 0x07, 0x01, 0xF1);
+    WriteResult OpenSession(void) {
+       return SendRS232Command(0x13, 0x07, 0x01, 0xF1);
+    }
+    WriteResult Open(void) { return OpenSession(); }
+
+    // Legacy reverse-engineered guess retained for API compatibility.
+    WriteResult KeepAlive(void) {
+       return SendRS232Command(0x13, 0x07, 0x5F, 0x5F);
     }
 
-    // just a guess
-    void KeepAlive(void) {
-       SendRS323Data(0x13, 0x07, 0x5F, 0x5F);
+    // Observed recurring in MotorcEnglish2026 v1.2.2.1 while its
+    // communications state is active. Semantics are not proven universal.
+    WriteResult ObservedPcPollExperimental(void) {
+       return SendRS232Command(0x05, 0x01, 0x5F, 0x5F);
     }
 
-    void Reset(void) {
-        WriteSysCmd(0x5);
+    WriteResult Reset(void) {
+        return WriteSystemCommand(0x5);
     }
 
     enum EReadError {
@@ -132,20 +162,24 @@ struct FardriverController {
         return { Success, addr };
     }
 
-#ifndef __GNUC__
-    // saves "cflash"
-    void SaveCANParameters(FardriverData * fd) {
-        uint8_t data[0x180 + 4];
-        uint8_t * pos = data + 4;
-        uint16_t size = (0x180) * 2;
-        memcpy(pos, fd->GetAddr(0x100), size);
-        WriteAddr(data, 0x00, 0x180);
+    // The app stores cflash as a separate 384-byte image. FardriverData does
+    // not establish that layout, so this legacy signature must fail closed.
+    WriteResult SaveCANParameters(FardriverData *) {
+        return WriteResult::UnsupportedSourceLayout;
+    }
+
+    WriteResult SaveCANParameterImage(const uint8_t * cflash, uint16_t size) {
+        if (size != 0x180)
+            return WriteResult::UnsupportedLength;
+        return WriteAddr(cflash, 0x00, size);
     }
 
     // saves "wflash"
-    void SaveParameters(FardriverData * fd) {
-        uint8_t data[0x138 + 4];
-        uint8_t * pos = data + 4;
+    WriteResult SaveParameters(FardriverData * fd) {
+        if (fd == NULL)
+            return WriteResult::InvalidArgument;
+        uint8_t data[0x138];
+        uint8_t * pos = data;
         uint16_t size = (0x36) * 2;
         memcpy(pos, fd->GetAddr(0x00), size);
         pos += size;
@@ -155,11 +189,11 @@ struct FardriverController {
         size = (0xD6 - 0x7C) * 2;
         memcpy(pos, fd->GetAddr(0x7C), size);
         pos += size;
-        WriteAddr(data, 0x01, 0x138);
+        return WriteAddr(data, 0x01, sizeof(data));
     }
-#endif
-
-    void SendDetectPacket(void) {
+    WriteResult SendDetectPacket(void) {
+        if (serial == NULL || serial->write == NULL)
+            return WriteResult::InvalidArgument;
         uint8_t message[8];
         message[0] = 0x5A;
         message[1] = 0xAA;
@@ -169,10 +203,13 @@ struct FardriverController {
         message[5] = 0x3C;
         message[6] = 0xFD;
         message[7] = 0xFE;
-        serial->write(message, 8);
+        return serial->write(message, 8) == 8
+            ? WriteResult::Success : WriteResult::TransportFailure;
     }
 
-    void SendACK(uint8_t index) {
+    WriteResult SendACK(uint8_t index) {
+        if (serial == NULL || serial->write == NULL)
+            return WriteResult::InvalidArgument;
         uint8_t message[8];
         message[0] = 0x5A;
         message[1] = 0xBB;
@@ -182,12 +219,14 @@ struct FardriverController {
         message[5] = 0x74;
         message[6] = 0x75;
         message[7] = 0x76;
-        serial->write(message, 8);
+        return serial->write(message, 8) == 8
+            ? WriteResult::Success : WriteResult::TransportFailure;
     }
 
     // can be used for regular packets & crc packet
     bool SendPacket(uint8_t index, const uint8_t * data, uint32_t length) {
-        if (length > 2048)
+        if (serial == NULL || serial->write == NULL || length > 2048 ||
+            (data == NULL && length != 0))
             return false;
         uint8_t message[2048 + 3 + 4];
         message[0] = 0x5A;
@@ -202,29 +241,53 @@ struct FardriverController {
         crc.Add(&message[2], 1 + 2048);
         crc.Assign(&message[3 + 2048]);
         printf("  Writing message\n");
-        serial->write(message, 3 + 2048 + 4);
-        return true;
+        return serial->write(message, sizeof(message)) == sizeof(message);
     }
 
-    bool VerifyCRCMessage(uint32_t index, const uint8_t * file_crc) {
+    enum class CRCMessageResult {
+        Success,
+        InvalidArgument,
+        Timeout,
+        ShortRead,
+        InvalidHeader,
+        ChecksumMismatch,
+        IndexMismatch,
+        CRCMismatch
+    };
+
+    CRCMessageResult VerifyCRCMessage(uint8_t index, const uint8_t * file_crc,
+                                      uint32_t max_availability_polls = 1) {
+        if (serial == NULL || serial->available == NULL || serial->read == NULL || file_crc == NULL)
+            return CRCMessageResult::InvalidArgument;
         // wait for 0xaa 0x1f <error> <index> <packet_crc[8]> <crc[2]>
         // no error if error < 0x7E && error == index
-        while(serial->available() < 16);
+        uint32_t polls = 0;
+        while (serial->available() < 16 && polls < max_availability_polls)
+            ++polls;
+        if (serial->available() < 16)
+            return CRCMessageResult::Timeout;
         uint8_t message[16] = { 0 };
-        serial->read(message, 16);
-        if (message[0] != 0xAA)
-            return false;
-        if (message[1] != 0x1F)
-            return false;
-        if (message[2] != message[3])
-            return false;
-        uint8_t * read_crc = &message[3];
-        for (uint8_t index = 0; index < 8; index++) {
-            if (file_crc[index] != read_crc[index]) {
-                return false;
+        if (serial->read(message, sizeof(message)) != sizeof(message))
+            return CRCMessageResult::ShortRead;
+        if (message[0] != 0xAA || message[1] != 0x1F)
+            return CRCMessageResult::InvalidHeader;
+        uint16_t checksum = 0;
+        for (uint8_t i = 0; i < 14; ++i)
+            checksum = static_cast<uint16_t>(checksum + message[i]);
+        if (message[14] != static_cast<uint8_t>(checksum >> 8) ||
+            message[15] != static_cast<uint8_t>(checksum & 0xFF))
+            return CRCMessageResult::ChecksumMismatch;
+        // The vendor app accepts this firmware response only when bytes 2 and
+        // 3 agree, then switches on that duplicated result/index value.
+        if (message[2] != message[3] || message[3] != index)
+            return CRCMessageResult::IndexMismatch;
+        const uint8_t * read_crc = &message[4];
+        for (uint8_t i = 0; i < 8; i++) {
+            if (file_crc[i] != read_crc[i]) {
+                return CRCMessageResult::CRCMismatch;
             }
         }
-        return true;
+        return CRCMessageResult::Success;
     }
 
     CRC crc;

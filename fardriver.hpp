@@ -19,7 +19,7 @@
 // #ifndef __GNUC__
 
 // Pins with PINInvalid3 assigned to it disables the feature, except for PausePin, which requires NC to disable
-enum PIN {
+enum PIN : uint8_t {
     NC = 0, // Normally Closed
     PIN24 = 1,
     PIN15 = 2, // Actually P4, CAN RX
@@ -78,12 +78,15 @@ uint32_t PIN_inv_lut [16] = {
 };
 */
 struct big_end_24b {
-    uint32_t byte_0 : 8;
-    uint32_t byte_1 : 8;
-    uint32_t byte_2 : 8;
+    uint8_t byte_0;
+    uint8_t byte_1;
+    uint8_t byte_2;
 #ifndef _010EDITOR
     float value(void) {
-        return 1.953125 * sqrt(byte_0 << 16 + byte_1 << 8 + byte_2);
+        const uint32_t raw = (static_cast<uint32_t>(byte_0) << 16)
+                           | (static_cast<uint32_t>(byte_1) << 8)
+                           | static_cast<uint32_t>(byte_2);
+        return 1.953125f * sqrtf(static_cast<float>(raw));
     }
 #endif
 };
@@ -172,7 +175,7 @@ ASSERT_SIZE(Addr00, 12);
 struct Addr06 {
     // 2, 0x06
     uint8_t Arg2 : 1;
-    enum EAntiTheftPulse {
+    enum EAntiTheftPulse : uint8_t {
         Invalid = 0,
         Type1 = 1,
         Type2 = 2,
@@ -210,14 +213,14 @@ struct Addr06 {
     int16_t CurveTime;
     
     // 12, 0x0B, cfg11l
-    enum EBrakeConfig {
+    enum EBrakeConfig : uint8_t {
         StopWhenGround = 0,
         StopWhenFloat = 1,
         P_StopGnd = 2,
         P_StopFloat = 3,
         BrakeDisabled = 4
     } BrakeConfig : 4;
-    enum ETempSensor {
+    enum ETempSensor : uint8_t {
         NoTempSensor = 0,
         PTC = 1,
         NTC230K = 2,
@@ -236,7 +239,7 @@ struct Addr06 {
     // 0: provide resistance to motor, does not consume battery
     // 1: lock motor, consumes battery
     uint8_t CurrAntiTheft : 1; // 0x10
-    enum EParkConfig {
+    enum EParkConfig : uint8_t {
         ReversePark = 0,
         SwitchPark = 1,
         SlowDownPark = 2,
@@ -292,19 +295,19 @@ struct Addr18 {
     uint16_t MaxLineCurr; // / 4, Send(0x12, 0x1B)
 
     // 6, 0x1A, cfg26l
-    enum EFollowConfig {
+    enum EFollowConfig : uint8_t {
         FollowEnabled = 0,
         FollowDisabled = 1,
         EABSWhenBreakValid = 2,
         EABSWhenReleaseThrottle = 3
     } FollowConfig : 2;
-    enum EThrottleResponse {
+    enum EThrottleResponse : uint8_t {
         Line = 0,
         Sport = 1,
         ECO = 2
     } ThrottleResponse : 2; // ECOConfig
     uint8_t WeakA : 2;
-    enum ERXD {
+    enum ERXD : uint8_t {
         AF = 0, // AF_PP, something specialCode
         OD = 1, // Out_OD
         PP = 2, // Out_PP
@@ -313,7 +316,7 @@ struct Addr18 {
 
     // 7 cfg26h
     uint8_t SpeedPulse : 5;
-    enum EGearConfig {
+    enum EGearConfig : uint8_t {
         DefaultN = 0,
         DefaultD = 1,
         GearConfig2 = 2,
@@ -751,13 +754,13 @@ struct AddrB8 {
     uint8_t ReleaseToSeat : 3; // SeatDelay, seconds
 
     // 11
-    enum ECANBaud {
+    enum ECANBaud : uint8_t {
         Baud250K = 0,
         Baud500K = 1,
         Baud1M = 2
     } CANBaud : 2; // CanSel
     uint8_t unkBC : 2; // set by CAN processing? resets baud to 250K as well
-    enum EPasswordStatus {
+    enum EPasswordStatus : uint8_t {
         PasswordProtected = 0, // default password maybe? 0s to serial
         AlsoPasswordProtected = 1, // password stored in sram? AT+PASS=... to serial
         NoPassword = 2 // AT+PAWD=... to serial
@@ -773,7 +776,7 @@ struct AddrB8 {
 
 // 0xBE
 struct AddrBE {
-    enum ELowVolWay {
+    enum ELowVolWay : uint8_t {
         Vol2V = 0,
         Vol4V = 1,
         Vol8V = 2,
@@ -869,7 +872,7 @@ struct AddrCA {
 #endif
     
     // uint8_t TaRlB9D0SP; 
-    enum ESPMode {    
+    enum ESPMode : uint8_t {
         HighOnly = 0, // Only high speed
         AddDec = 1, // Increment/Decrement by button
         ButtonHighLow = 2, // "Point moving", 2 speed, High & Low
@@ -901,7 +904,7 @@ struct AddrCA {
     // CE
     uint8_t MinSpeedCapCoeff; // LmtSpdMaxCoeff
     uint8_t ParkCoeff : 4; // SlowDownCoeff
-    enum EBattSignal {
+    enum EBattSignal : uint8_t {
         OneLineComm = 0,
         SerialComm = 1,
         CAN = 2,
@@ -937,13 +940,13 @@ struct AddrD0 {
     // speed = MeasureSpeed * (0.00376991136 * (WheelRadius * 1270 + WheelWidth * WheelRatio) / RateRatio)
     
     // 12-13, 0xD5 OneCommCfg
-    enum EIdle {
+    enum EIdle : uint8_t {
         Idle0_5ms = 0,
         Idle0_9ms = 1,
         Idle1_5ms = 2,
         Idle1_9ms = 3
     } Idle : 2;
-    enum EStop {
+    enum EStop : uint8_t {
         Stop24ms = 0,
         Stop55ms = 1,
         Stop124ms = 2,
@@ -951,7 +954,7 @@ struct AddrD0 {
     } Stop : 2;
     uint8_t ByteOption : 4; // Byte89Sel
     // if SpecialCode == 'Z', 0xF may trigger USART3 (one-line??) at different speeds
-    enum ESpecialFrame {
+    enum ESpecialFrame : uint8_t {
         SpeedPulse = 0,
         ReadyLamp = 1,
         FanControl = 2,

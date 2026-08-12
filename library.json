@@ -20,5 +20,13 @@
   "platforms": "*",
   "build" : {
     "includeDir" : "."
+  },
+  "export": {
+    "exclude": [
+      "examples/*/.pio",
+      "tests",
+      "MANUAL_CN_files",
+      "*.log"
+    ]
   }
 }
