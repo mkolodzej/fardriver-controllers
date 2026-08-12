@@ -1,5 +1,26 @@
 # Nanjing Fardriver Controllers
 
+This public fork contains a maintained, buildable extension of the original
+reverse-engineering library:
+
+- bounded read/write framing with explicit transport and validation errors;
+- incremental status parsing with noise resynchronization, CRC checks, and
+  timeouts;
+- native protocol vectors plus ESP32 PlatformIO smoke, UART, and NimBLE builds;
+- read-only exact-unit BLE capture tooling and preserved evidence for the
+  `ND72200_80_A_HA86` investigation.
+
+Fork provenance: [mkolodzej/fardriver-controllers](https://github.com/mkolodzej/fardriver-controllers),
+based on upstream commit `7cbc0c9`. The upstream repository is unchanged by
+this fork. The implementation is MIT-licensed like the upstream code; vendor
+manuals, app binaries, and controller firmware remain proprietary artifacts.
+
+Current validation status: the library builds with native GCC and PlatformIO's
+ESP32 toolchain. The exact installed BLE adapter does not match the official
+app's `FFE0`/`FFEC` profile, so its `FFE1`/`FFE2` channels remain experimental;
+3.3 V TTL UART is the established transport path for exact-unit read/write
+qualification.
+
 ## Build verification
 
 This repository is a PlatformIO library rather than a standalone firmware
@@ -80,7 +101,8 @@ Windows discovery, operator-correlated to adapter `603164J3A101351` at
 (notify/read/write), `FFE2` (notify/write), and `FFE3` (write), not the EKSR
 project's `FFEC`. A payload-read-only `FFE1` capture produced repeated ASCII
 `AT\r\n` records rather than 16-byte telemetry. `FFE2` remains the next passive
-capture candidate; select it with `FARDRIVER_BLE_CHARACTERISTIC_UUID="FFE2"`.
+capture candidate; it was attempted once with no notifications. Select it with
+`FARDRIVER_BLE_CHARACTERISTIC_UUID="FFE2"` for a repeat capture.
 An operator-observed 20-second payload-read-only `FFE2` subscription completed
 with zero notifications, although the original capture lacks sufficient run
 metadata to prove its duration independently. Therefore neither `FFE1` nor
@@ -90,9 +112,9 @@ GATT layout are consistent with a transparent-UART module, but this differs
 from the official app's module profile. `FF10` is not used by the extracted
 FarDriver app and must not be treated as a controller channel.
 
-Both emit timestamped, CRC-valid raw frames as hexadecimal. Preserve those
-raw captures as the evidence used to create an exact controller/firmware
-decoder profile. The packed `FardriverData` helpers contain reverse-engineered
+Successful captures emit timestamped raw frames as hexadecimal; the parser
+only reports frames after CRC validation. Preserve raw captures as the evidence
+used to create an exact controller/firmware decoder profile. The packed `FardriverData` helpers contain reverse-engineered
 scalings from other controller variants; do not treat them as validated for a
 new controller merely because framing and CRC pass.
 
