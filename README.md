@@ -206,7 +206,27 @@ a deliberate decision rather than a probe. FarDriver **address writes** (paramet
 changes) also remain excluded: the controller's factory configuration was never
 exported, so there is no restore point.
 
-⚠ **Discount BLE negatives by the host radio.** The capture host used a
+✅ **[MEASURED] 2026-08-12 — host radio replaced; every BLE finding above is
+CONFIRMED independent of it.** The original captures ran on a degraded CSR8510
+A10 (details below), so a negative could in principle have been host-caused. The
+capture host was changed to an **ASUS USB-BT400** (Broadcom BCM20702A0,
+`USB\VID_0B05&PID_17CB`, driver `oem237.inf` `12.0.1.921`): `BTHUSB` **event 31 is
+gone** and RSSI improved from −82…−90 to **−69…−71 dBm**.
+
+Re-capture (`captures/nd72200-ble-recapture-usbbt400-2026-08-12.jsonl`) connected
+on **attempt 1** with no retry loop and reproduced everything: **269 receives over
+42.7 s, all on `FFE1`, all `AT\r\n`**, zero `0xAA`-led frames, zero 16-byte
+records, `FFE2`/`FF11`/`FF12` silent, the identical GATT table, `FFEC` still
+absent — and **the same 150 ms median inter-arrival** (min 55, max 180).
+
+**[INFERENCE]** The cadence reproducing exactly across two independent host
+controllers proves it is the **remote device's** timing rather than a host
+artifact, and the `AT\r\n`-only result is not an artifact of the weak adapter. The
+findings are properties of the controller/module. ⚠ Event **34** persists with the
+identical mask because the BT400 is also a BT 4.0 part — but 34 concerns the
+*peripheral* role, which read-only central-role capture never uses.
+
+⚠ **HISTORICAL — the degraded original capture host.** It used a
 **CSR8510 A10** dongle (`USB\VID_0A12&PID_0001`) on Microsoft's in-box `bth.inf`.
 Windows logs `BTHUSB` **event 31** (no hardware filtering of LE advertisements)
 and **event 34** (LE controller state mask `0x1fffffff` against a required
